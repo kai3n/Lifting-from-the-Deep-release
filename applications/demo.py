@@ -12,11 +12,14 @@ from lifting import PoseEstimator
 from lifting.utils import draw_limbs
 from lifting.utils import plot_pose
 
+import time
+import pickle
 import cv2
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
 from os.path import dirname, realpath
+
 
 DIR_PATH = dirname(realpath(__file__))
 PROJECT_PATH = realpath(DIR_PATH + '/..')
@@ -56,27 +59,14 @@ pose = []
 def estimate_video():
 
     fourcc = cv2.VideoWriter_fourcc('m', 'p', '4', 'v')
-    video_writer1 = cv2.VideoWriter(PROJECT_PATH + '/data/videos/test_result.mp4', fourcc, 10.0, (640, 480))
-    # video_writer2 = cv2.VideoWriter(PROJECT_PATH + '/data/videos/test_result_3d.mp4', fourcc, 10.0, (640, 480))
+    video_writer1 = cv2.VideoWriter(PROJECT_PATH + '/data/videos/test_result_{}.mp4'.format(str(time.time())), fourcc, 30.0, (640, 480))
     cap = cv2.VideoCapture(PROJECT_PATH + '/data/videos/test_video.mp4')
 
     import mpl_toolkits.mplot3d.axes3d as p3
     fig = plt.figure()
     ax = fig.gca(projection='3d')
 
-    pose = np.array([[  11.3526683, -82.55155479, -148.66113686, -65.41943422 , 91.45557751,
-     53.26781147, 66.86493085, 38.04185689, 7.28628714, -48.41194608,
-     -5.47691749, 139.73787422, 223.42598994, 247.67292748, -118.95568127,
-   -196.4879065,  -212.15876749],
-  [  23.02331676,  124.74562903,    8.44339516,   70.14820979,  -78.69893769,
-   -180.41105152,  -83.59408481,   53.64574645,   20.80042024,  -55.12668849,
-    -12.24949449,  -72.19321393, -131.84483411, -211.98540937,  136.81573026,
-    235.5655179,   152.61293169],
-  [-116.93687833, -126.13634777, -473.11945881, -837.70550931, -127.37170391,
-   -478.14888198, -885.36476784,  184.5672324,   563.56434648,  603.01735506,
-    809.97294291,  454.13285347,  178.52674073,  -67.75306918,  497.82676333,
-    232.63506518,   -4.05807492]])
-    pose_list = [pose]
+    pose_list = []
 
     def animate(pose):
 
@@ -94,11 +84,18 @@ def estimate_video():
             col = '#%02x%02x%02x' % joint_color(j)
             ax.scatter(pose[0, j], pose[1, j], pose[2, j],
                        c=col, marker='o', edgecolor=col)
-        smallest = pose.min()
-        largest = pose.max()
-        ax.set_xlim3d(smallest, largest)
-        ax.set_ylim3d(smallest, largest)
-        ax.set_zlim3d(smallest, largest)
+        # smallest = pose.min()
+        # largest = pose.max()
+        # print('smallest:', smallest)  # -885.36476784
+        # print('largest:', largest)  # 809.97294291
+        #
+        # ax.set_xlim3d(smallest, largest)
+        # ax.set_ylim3d(smallest, largest)
+        # ax.set_zlim3d(smallest, largest)
+
+        ax.set_xlim3d(-1000, 1000)
+        ax.set_ylim3d(-1000, 1000)
+        ax.set_zlim3d(-1000, 1000)
 
     if (cap.isOpened() == False):
         print("Error opening video stream or file")
@@ -108,46 +105,94 @@ def estimate_video():
     FFMpegWriter = manimation.writers['ffmpeg']
     metadata = dict(title='Movie Test', artist='Matplotlib',
                     comment='Movie support!')
-    writer = FFMpegWriter(fps=10, metadata=metadata)
+    writer = FFMpegWriter(fps=30, metadata=metadata)
+
+    # create pose estimator
+
+    pose_estimator = PoseEstimator((480, 640, 3), SESSION_PATH, PROB_MODEL_PATH)
+
+    # load model
+    pose_estimator.initialise()
 
     count = 0
     while cap.isOpened():
         count += 1
-        if count > 100:
+        if count == 300:
             break
+        print('count:{}'.format(str(count)))
         ret_val, frame = cap.read()
         frame = cv2.resize(frame, (640, 480))
 
-        # create pose estimator
-        frame_size = frame.shape
-
-        pose_estimator = PoseEstimator(frame_size, SESSION_PATH, PROB_MODEL_PATH)
-
-        # load model
-        pose_estimator.initialise()
 
         try:
             # estimation
+            start = time.time()
             pose_2d, visibility, pose_3d = pose_estimator.estimate(frame)
+            print(time.time()-start)
         except:
             continue
 
         pose_list.append(pose_3d[0])
-
-        # close model
-        pose_estimator.close()
-
         draw_limbs(frame, pose_2d, visibility)
-
         video_writer1.write(frame)
 
-    with writer.saving(fig, PROJECT_PATH + '/data/videos/test_result_3d.mp4', 100):
+    # close model
+    pose_estimator.close()
+
+
+    with writer.saving(fig, PROJECT_PATH + '/data/videos/test_result_3d_{}.mp4'.format(str(time.time())), 100):
         for i in range(len(pose_list)):
             animate(pose_list[i])
             writer.grab_frame()
 
     # im_ani.save(PROJECT_PATH + '/data/videos/test_result_3d.mp4', writer=writer)
     # video_writer1.release()
+
+
+def estimate_video_and_save_pkl():
+
+    pose_list = []
+    cap = cv2.VideoCapture(PROJECT_PATH + '/data/videos/test_video.mp4')
+
+    if (cap.isOpened() == False):
+        print("Error opening video stream or file")
+
+    # create pose estimator
+    pose_estimator = PoseEstimator((480, 640, 3), SESSION_PATH, PROB_MODEL_PATH)
+
+    # load model
+    pose_estimator.initialise()
+
+    count = 0
+    while cap.isOpened():
+        count += 1
+        if count == 300:
+            break
+        print('count:{}'.format(str(count)))
+        ret_val, frame = cap.read()
+        frame = cv2.resize(frame, (640, 480))
+
+        try:
+            # estimation
+            start = time.time()
+            pose_2d, visibility, pose_3d = pose_estimator.estimate(frame)
+            finish = time.time() - start
+            print("time:", finish)
+        except:
+            continue
+
+        pose_list.append(pose_3d[0])
+    # close model
+    pose_estimator.close()
+
+    with open(PROJECT_PATH + '/data/videos/' + '3d_joints_{}'.format(str(time.time())), 'wb') as fo:
+        pickle.dump(pose_list, fo)
+
+
+def load_pkl(filename):
+    with open(PROJECT_PATH + '/data/videos/' + filename, 'rb') as fi:
+        data = pickle.load(fi)
+    return data
 
 
 def joint_color(j):
@@ -172,8 +217,8 @@ def joint_color(j):
 
 
 def main():
-    estimate_video()
-
+    # estimate_video()
+    estimate_video_and_save_pkl()
 
 def display_results(in_image, data_2d, joint_visibility, data_3d):
     """Plot 2D and 3D poses for each of the people in the image."""
